@@ -1,0 +1,5 @@
+# Modules in lib/ are sourced, not executed directly
+# SC2148: Tips depend on target shell (no shebang in sourced files)
+# SC2034: Variable appears unused (used in other sourced modules)
+shell=bash
+disable=SC2148,SC2034
