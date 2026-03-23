@@ -1,0 +1,38 @@
+name: Shell CI
+
+on:
+  push:
+    branches: [main, refactor/*]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax check (bash -n)
+        run: |
+          for f in lib/*.sh rotate_fallback.sh scripts/*.sh; do
+            echo "Checking $f..."
+            bash -n "$f"
+          done
+          echo "Checking deploy_mt.sh..."
+          bash -n deploy_mt.sh
+
+      - name: ShellCheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: '.'
+          additional_files: 'lib/*.sh rotate_fallback.sh scripts/*.sh'
+          severity: warning
+
+      - name: Verify generated deploy_mt.sh is up to date
+        run: |
+          bash scripts/build-single-file.sh
+          if ! git diff --exit-code deploy_mt.sh; then
+            echo "❌ deploy_mt.sh is out of date! Run: bash scripts/build-single-file.sh"
+            exit 1
+          fi
+          echo "✅ deploy_mt.sh is up to date"
