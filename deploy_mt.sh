@@ -96,6 +96,8 @@ config_exists() {
 load_config_safe() {
     [[ -f "$CONFIG_FILE" ]] || return 1
 
+    local found_engine=false
+
     while IFS='=' read -r k v; do
         # Убираем возможные пробелы и кавычки
         v="${v%\"}"
@@ -109,10 +111,14 @@ load_config_safe() {
             FAKETLS_DOMAIN)     FAKETLS_DOMAIN="$v" ;;
             SECRET)             SECRET="$v" ;;
             SNI_MODE)           SNI_MODE="$v" ;;
-            ENGINE)             PROXY_ENGINE="$v" ;;
+            ENGINE)             PROXY_ENGINE="$v"; found_engine=true ;;
             # Остальные ключи — в переменные, но не перезаписываем readonly
         esac
     done < <(grep -E "^(${CONFIG_KEYS})=" "$CONFIG_FILE" 2>/dev/null)
+
+    if [[ "$found_engine" == false ]]; then
+        PROXY_ENGINE="mtg"
+    fi
 }
 
 # ── Валидация загруженного конфига ──
