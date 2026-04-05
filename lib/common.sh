@@ -57,6 +57,11 @@ readonly SYSCTL_CONF="/etc/sysctl.d/99-mtproxy-stealth.conf"
 readonly REALIP_CONF="/etc/nginx/conf.d/99-mtproto-realip.conf"
 readonly ROTATE_SCRIPT="/root/rotate_fallback.sh"
 
+# Telemt (Rust) — новый движок
+readonly TELEMT_IMAGE="ghcr.io/telemt/telemt:latest"
+readonly TELEMT_CONFIG_DIR="/root/.telemt"
+readonly TELEMT_CONFIG_FILE="/root/.telemt/config.toml"
+
 # РФ-дружественные домены (РКН не блочит, ASN безопасен)
 readonly RF_DOMAINS=("yandex.ru" "mail.ru" "ok.ru" "sberbank.ru" "beeline.ru" "rambler.ru" "rutube.ru")
 
@@ -66,3 +71,4 @@ FAKETLS_DOMAIN=""
 SNI_MODE=false
 SERVER_IP="${SERVER_IP:-}"
 SECRET=""
+PROXY_ENGINE="${PROXY_ENGINE:-telemt}"  # "telemt" (Rust, рекомендуется) или "mtg" (Go, legacy)

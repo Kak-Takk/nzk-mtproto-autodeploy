@@ -6,7 +6,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Shell](https://img.shields.io/badge/Shell-Bash%205.0+-green.svg)](https://www.gnu.org/software/bash/)
 [![Docker](https://img.shields.io/badge/Docker-Required-2496ED.svg?logo=docker)](https://www.docker.com/)
-[![MTG](https://img.shields.io/badge/mtg-v2-orange.svg)](https://github.com/9seconds/mtg)
+[![Telemt](https://img.shields.io/badge/Telemt-Rust-orange.svg)](https://github.com/telemt/telemt)
+[![MTG](https://img.shields.io/badge/mtg-v2%20legacy-lightgrey.svg)](https://github.com/9seconds/mtg)
 [![Platform](https://img.shields.io/badge/Platform-Ubuntu%20%7C%20Debian-E95420.svg?logo=ubuntu)](https://ubuntu.com/)
 
 <br>
@@ -63,8 +64,8 @@ Deep Packet Inspection (DPI) systems use three main vectors to block proxies. Ou
 
 | Attack Vector | What DPI Does | Our Defense |
 |---|---|---|
-| **Active Probing** | Scans port 443 with fake TLS ClientHello | FakeTLS + Fallback: scanner gets a TLS error or redirect, not proxy fingerprint |
-| **Passive Fingerprinting** | Analyses packet sizes, MSS, RTT patterns | MSS=850 + BBR + diverse packet sizes |
+| **Active Probing** | Scans port 443 with fake TLS ClientHello | **TCP Splicing (Telemt):** scanner gets the real website, not a proxy fingerprint |
+| **Passive Fingerprinting** | Analyses packet sizes, MSS, RTT patterns | MSS=850 + BBR + TLS emulation (Telemt copies real TLS records) |
 | **Statistical Analysis** | Correlates SNI with IP/ASN, long-lived sessions | Trusted RF domains + manual rotation when blocked |
 
 ### 💡 Core Principle
@@ -166,11 +167,11 @@ We took the best techniques from top-tier network security tools and combined th
 ### Mode 1 — Direct Connection (Port is free)
 
 ```text
-+----------+         +-------------------+
-| Telegram |---443-->|  MTProto Proxy    |
-|  Client  |         |  (Docker: mtg v2) |
-+----------+         +-------------------+
-                     Network filters see: TLS 1.3 -> yandex.ru / mail.ru (auto-selected RF domain)
++----------+         +------------------------+
+| Telegram |---443-->|  MTProto Proxy          |
+|  Client  |         |  (Telemt / mtg v2)      |
++----------+         +------------------------+
+                     Network filters see: TLS 1.3 -> mail.ru (TCP Splicing — real website)
 ```
 
 ### Mode 2 — SNI Routing (Nginx on 443)
@@ -222,12 +223,15 @@ When run again, the script offers a menu:
 ║   Existing MTProto proxy installation detected!              ║
 ╚══════════════════════════════════════════════════════════════╝
 
-  1) Update image     — pull new mtg, recreate container
-  2) Reinstall        — from scratch, new secret
-  3) Uninstall all    — rollback nginx from backup
-  4) Status           — links & logs
-  5) Exit
+  1) Update image          — pull new image, recreate container
+  2) ⚡ Migrate to Telemt   — switch from MTG v2 to Rust engine
+  3) Reinstall             — from scratch, new secret
+  4) Uninstall all         — rollback nginx from backup
+  5) Status                — links & logs
+  6) Exit
 ```
+
+> **Note:** Option 2 appears only if the current engine is MTG v2.
 
 ### Manual Commands
 
@@ -241,8 +245,8 @@ docker logs -f mtproto-proxy
 # Restart
 docker restart mtproto-proxy
 
-# Update image
-docker pull nineseconds/mtg:2 && docker rm -f mtproto-proxy && sudo bash deploy_mt.sh
+# Update image (Telemt)
+docker pull ghcr.io/telemt/telemt:latest && docker rm -f mtproto-proxy && sudo bash deploy_mt.sh
 ```
 
 ---
@@ -297,9 +301,9 @@ After installation, the script provides ready-to-use links:
 </details>
 
 <details>
-<summary><b>⚡ How to update mtg?</b></summary>
+<summary><b>⚡ How to update / migrate to Telemt?</b></summary>
 
-Simply run the script again and select option 1 (Update image). Your secret and connection links will remain the same.
+Run the script again. Option 1 updates the current engine. Option 2 (if running MTG v2) migrates to Telemt — the secret and links will change, you'll need to reconfigure devices.
 </details>
 
 <details>
@@ -312,16 +316,16 @@ Run the script again and select option 3 (Uninstall all). Nginx configs will be 
 
 ---
 
-## 🔧 Technical Details (v2.0)
+## 🔧 Technical Details (v0.3)
 
-- **Engine:** [mtg v2](https://github.com/9seconds/mtg) — Go-implementation of MTProto proxy
-- **Containerization:** Docker with `restart: unless-stopped`, memory limits (256MB), PIDs (1024), and `--read-only`
-- **Nginx Stream:** SNI routing with `ssl_preread` + `proxy_buffer_size 16k` for stream fragmentation
-- **Network Stack (Stealth):** Kernel `sysctl` tuning (FQ, BBR) + `iptables` MSS-clamping at 850 bytes. No artificial `tc netem` delays
-- **FakeTLS Domain:** Auto-selects trusted RF domains. In SNI mode, auto-switches to RF domain if your site domain matches (prevents nginx map conflict)
-- **Rotation:** `/root/rotate_fallback.sh` manual script for cover domain rotation when blocked
-- **Backups:** Timestamped copies of `/etc/nginx` before any modification
-- **Config:** `/root/.mtproto-proxy.conf` (chmod 600)
+- **Engine (default):** [Telemt](https://github.com/telemt/telemt) — Rust/Tokio, TCP Splicing, Middle-End Pool
+- **Engine (legacy):** [mtg v2](https://github.com/9seconds/mtg) — Go, available at install and via migration
+- **Containerization:** Docker with `restart: unless-stopped`, memory limits (256MB), PIDs (1024)
+- **Nginx Stream:** SNI routing with `ssl_preread` + `proxy_buffer_size 16k`
+- **Network Stack (Stealth):** Kernel `sysctl` tuning (FQ, BBR) + `iptables` MSS-clamping at 850 bytes
+- **FakeTLS Domain:** Auto-selects trusted RF domains
+- **Telemt config:** `/root/.telemt/config.toml` (TOML)
+- **Proxy config:** `/root/.mtproto-proxy.conf` (chmod 600)
 
 ---
 

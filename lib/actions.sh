@@ -1,7 +1,39 @@
 # ══════════════════════════════════════════════════════════════════
 # lib/actions.sh — Высокоуровневые пользовательские действия
-# check_existing, show_status, uninstall_all
+# check_existing, show_status, uninstall_all, migrate, engine select
 # ══════════════════════════════════════════════════════════════════
+
+# ── Выбор движка при свежей установке ──
+select_engine() {
+    echo ""
+    echo -e "  ${CYAN}${BOLD}╔══════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "  ${CYAN}${BOLD}║          Выберите движок MTProto-прокси                  ║${RESET}"
+    echo -e "  ${CYAN}${BOLD}╚══════════════════════════════════════════════════════════╝${RESET}"
+    echo ""
+    echo -e "  ${GREEN}1${RESET}) ${BOLD}Telemt (Rust)${RESET}  — ${GREEN}РЕКОМЕНДУЕТСЯ${RESET}"
+    echo -e "     ${DIM}TCP Splicing, быстрая загрузка медиа, TLS-эмуляция${RESET}"
+    echo ""
+    echo -e "  ${CYAN}2${RESET}) ${BOLD}MTG v2 (Go)${RESET}    — Legacy"
+    echo -e "     ${DIM}Классический движок, проверенный временем${RESET}"
+    echo ""
+    echo -ne "  ${CYAN}Выбор [1-2] (по умолчанию 1):${RESET} "
+    read -r engine_choice
+
+    case "${engine_choice:-1}" in
+        1)
+            PROXY_ENGINE="telemt"
+            log_ok "Выбран движок: ${BOLD}Telemt (Rust)${RESET}"
+            ;;
+        2)
+            PROXY_ENGINE="mtg"
+            log_ok "Выбран движок: ${BOLD}MTG v2 (Go)${RESET}"
+            ;;
+        *)
+            PROXY_ENGINE="telemt"
+            log_ok "Выбран движок по умолчанию: ${BOLD}Telemt (Rust)${RESET}"
+            ;;
+    esac
+}
 
 # ── Проверка существующей установки ──
 check_existing() {
@@ -25,6 +57,7 @@ check_existing() {
     echo -e "  ${CYAN}Сервер:${RESET}     ${BOLD}${SERVER_IP}${RESET}"
     echo -e "  ${CYAN}Порт:${RESET}       ${BOLD}${PROXY_PORT}${RESET}"
     echo -e "  ${CYAN}Контейнер:${RESET}  ${BOLD}${CONTAINER_NAME}${RESET} — ${status}"
+    echo -e "  ${CYAN}Движок:${RESET}     ${BOLD}${PROXY_ENGINE:-mtg}${RESET}"
     echo -e "  ${CYAN}SNI-режим:${RESET}  ${BOLD}${SNI_MODE:-false}${RESET}"
     echo -e "  ${CYAN}FakeTLS:${RESET}    ${BOLD}${FAKETLS_DOMAIN}${RESET}"
     echo ""
@@ -32,13 +65,16 @@ check_existing() {
     echo ""
     echo -e "  ${WHITE}${BOLD}Что сделать?${RESET}"
     echo ""
-    echo -e "  ${CYAN}1${RESET}) ${BOLD}Обновить образ${RESET}  — pull новый mtg, пересоздать контейнер (секрет сохранится)"
-    echo -e "  ${CYAN}2${RESET}) ${BOLD}Переустановить${RESET} — полная переустановка с нуля (новый секрет)"
-    echo -e "  ${CYAN}3${RESET}) ${BOLD}Удалить всё${RESET}    — убрать прокси и вернуть nginx как было"
-    echo -e "  ${CYAN}4${RESET}) ${BOLD}Статус${RESET}         — показать ссылки подключения и логи"
-    echo -e "  ${CYAN}5${RESET}) ${BOLD}Выход${RESET}"
+    echo -e "  ${CYAN}1${RESET}) ${BOLD}Обновить образ${RESET}  — pull новый образ, пересоздать контейнер (секрет сохранится)"
+    if [[ "${PROXY_ENGINE:-mtg}" == "mtg" ]]; then
+        echo -e "  ${GREEN}2${RESET}) ${BOLD}⚡ Мигрировать на Telemt${RESET} — переход на Rust-движок (ссылки обновятся)"
+    fi
+    echo -e "  ${CYAN}3${RESET}) ${BOLD}Переустановить${RESET} — полная переустановка с нуля (новый секрет)"
+    echo -e "  ${CYAN}4${RESET}) ${BOLD}Удалить всё${RESET}    — убрать прокси и вернуть nginx как было"
+    echo -e "  ${CYAN}5${RESET}) ${BOLD}Статус${RESET}         — показать ссылки подключения и логи"
+    echo -e "  ${CYAN}6${RESET}) ${BOLD}Выход${RESET}"
     echo ""
-    echo -ne "  ${CYAN}Выбор [1-5]:${RESET} "
+    echo -ne "  ${CYAN}Выбор [1-6]:${RESET} "
     read -r choice
 
     case "$choice" in
@@ -47,18 +83,27 @@ check_existing() {
             exit 0
             ;;
         2)
+            if [[ "${PROXY_ENGINE:-mtg}" == "mtg" ]]; then
+                migrate_to_telemt
+                exit 0
+            else
+                log_err "Неверный выбор."
+                exit 1
+            fi
+            ;;
+        3)
             reinstall_flow
             return 1  # Продолжить как свежая установка
             ;;
-        3)
+        4)
             uninstall_all
             exit 0
             ;;
-        4)
+        5)
             show_status
             exit 0
             ;;
-        5)
+        6)
             log_info "Выход."
             exit 0
             ;;
@@ -71,13 +116,61 @@ check_existing() {
 
 # ── Обновление образа ──
 update_flow() {
-    log_step "${ICON_ROCKET} Обновление образа MTProto"
-    docker pull "${MTG_IMAGE}" 2>&1 | tail -3
+    local image_to_pull="${MTG_IMAGE}"
+    if [[ "$PROXY_ENGINE" == "telemt" ]]; then
+        image_to_pull="${TELEMT_IMAGE}"
+    fi
+
+    log_step "${ICON_ROCKET} Обновление образа (${PROXY_ENGINE})"
+    docker pull "${image_to_pull}" 2>&1 | tail -3
     docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+
+    if [[ "$PROXY_ENGINE" == "telemt" ]]; then
+        generate_telemt_config
+    fi
+
     launch_container
     health_check
     save_config
     log_ok "Образ обновлён, контейнер пересоздан"
+    print_connection_info
+}
+
+# ── Миграция с MTG v2 на Telemt ──
+migrate_to_telemt() {
+    log_step "${ICON_ROCKET} Миграция MTG v2 → Telemt (Rust)"
+
+    echo ""
+    echo -e "  ${YELLOW}${BOLD}Что произойдёт:${RESET}"
+    echo -e "    ${WHITE}1. Старый контейнер mtg будет остановлен${RESET}"
+    echo -e "    ${WHITE}2. Сгенерируется новый секрет (формат Telemt: 32-hex)${RESET}"
+    echo -e "    ${WHITE}3. Запустится контейнер Telemt (Rust)${RESET}"
+    echo -e "    ${WHITE}4. ${BOLD}Ссылки изменятся${RESET}${WHITE} — нужно будет обновить на устройствах${RESET}"
+    echo ""
+    echo -ne "  ${CYAN}Продолжить? [y/N]:${RESET} "
+    read -r confirm
+    if [[ "${confirm,,}" != "y" && "${confirm,,}" != "д" ]]; then
+        log_info "Миграция отменена."
+        return 0
+    fi
+
+    # 1. Генерируем новый секрет
+    PROXY_ENGINE="telemt"
+    generate_secret_telemt
+
+    # 2. Генерируем config.toml
+    generate_telemt_config
+
+    # 3. Пересоздаём контейнер
+    docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+    launch_container
+    health_check
+
+    # 4. Сохраняем конфиг с новым ENGINE
+    save_config
+    install_rotate_script
+
+    log_ok "Миграция завершена! Движок: ${BOLD}Telemt (Rust)${RESET}"
     print_connection_info
 }
 

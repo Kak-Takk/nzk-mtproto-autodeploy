@@ -12,14 +12,24 @@ main() {
         exit 0  # Действие выполнено внутри check_existing
     fi
 
-    # Свежая установка — 18 шагов
+    # Свежая установка
     detect_os
     check_dependencies
     ensure_docker
     detect_ip
+    select_engine
     select_faketls_domain
-    generate_secret
-    check_port
+
+    # Генерация секрета и конфига — зависит от движка
+    if [[ "$PROXY_ENGINE" == "telemt" ]]; then
+        generate_secret_telemt
+        check_port
+        generate_telemt_config
+    else
+        generate_secret
+        check_port
+    fi
+
     apply_stealth_shaping
     launch_container
     health_check
