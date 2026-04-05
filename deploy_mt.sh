@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
-# ══════════════════════════════════════════════════════════════════
-# Telegram MTProto FakeTLS Proxy Deployer (mtg v2)
-# втоматический деплой MTProto-прокси для Telegram
-# спользование: chmod +x deploy_mt.sh && sudo ./deploy_mt.sh
-#
-# ⚠️  GENERATED FILE -- DO NOT EDIT DIRECTLY
-# Source of truth: lib/*.sh
-# Rebuild: bash scripts/build-single-file.sh
-# ══════════════════════════════════════════════════════════════════
-set -euo pipefail
+#  deploy_mt.sh — MTProto FakeTLS Proxy Deployer
+#  GENERATED FILE — DO NOT EDIT DIRECTLY
 
 # >>> BEGIN lib/common.sh >>>
 # ══════════════════════════════════════════════════════════════════
@@ -69,6 +61,11 @@ readonly SYSCTL_CONF="/etc/sysctl.d/99-mtproxy-stealth.conf"
 readonly REALIP_CONF="/etc/nginx/conf.d/99-mtproto-realip.conf"
 readonly ROTATE_SCRIPT="/root/rotate_fallback.sh"
 
+# Telemt (Rust) — новый движок
+readonly TELEMT_IMAGE="ghcr.io/telemt/telemt:latest"
+readonly TELEMT_CONFIG_DIR="/root/.telemt"
+readonly TELEMT_CONFIG_FILE="/root/.telemt/config.toml"
+
 # РФ-дружественные домены (РКН не блочит, ASN безопасен)
 readonly RF_DOMAINS=("yandex.ru" "mail.ru" "ok.ru" "sberbank.ru" "beeline.ru" "rambler.ru" "rutube.ru")
 
@@ -78,122 +75,9 @@ FAKETLS_DOMAIN=""
 SNI_MODE=false
 SERVER_IP="${SERVER_IP:-}"
 SECRET=""
+PROXY_ENGINE="${PROXY_ENGINE:-telemt}"  # "telemt" (Rust, рекомендуется) или "mtg" (Go, legacy)
 
 # <<< END lib/common.sh <<<
-
-# >>> BEGIN lib/output.sh >>>
-# ══════════════════════════════════════════════════════════════════
-# lib/output.sh — Presentation и UX: banner, ссылки подключения
-# ══════════════════════════════════════════════════════════════════
-
-# ── ASCII-баннер ──
-show_banner() {
-cat << 'BANNER'
-
-BANNER
-echo -e "${CYAN}${BOLD}"
-cat << 'ASCII'
-    ╔═══════════════════════════════════════════════════════════════════╗
-    ║                                                                   ║
-    ║   ███╗   ███╗████████╗██████╗ ██████╗  ██████╗ ████████╗ ██████╗  ║
-    ║   ████╗ ████║╚══██╔══╝██╔══██╗██╔══██╗██╔═══██╗╚══██╔══╝██╔═══██╗ ║
-    ║   ██╔████╔██║   ██║   ██████╔╝██████╔╝██║   ██║   ██║   ██║   ██║ ║
-    ║   ██║╚██╔╝██║   ██║   ██╔═══╝ ██╔══██╗██║   ██║   ██║   ██║   ██║ ║
-    ║   ██║ ╚═╝ ██║   ██║   ██║     ██║  ██║╚██████╔╝   ██║   ╚██████╔╝ ║
-    ║   ╚═╝     ╚═╝   ╚═╝   ╚═╝     ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝  ║
-    ║                                                                   ║
-    ║                    ███╗   ██╗███████╗██╗  ██╗                     ║
-    ║                    ████╗  ██║╚══███╔╝██║ ██╔╝                     ║
-    ║                    ██╔██╗ ██║  ███╔╝ █████╔╝                      ║
-    ║                    ██║╚██╗██║ ███╔╝  ██╔═██╗                      ║
-    ║                    ██║ ╚████║███████╗██║  ██╗                     ║
-    ║                    ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝                     ║
-    ║                                                                   ║
-    ╚═══════════════════════════════════════════════════════════════════╝
-ASCII
-echo -e "${RESET}"
-echo -e "${WHITE}${BOLD}       ⚡ Telegram MTProto FakeTLS Proxy Deployer ⚡${RESET}"
-echo -e "${CYAN}          mtg v2  ·  Docker  ·  Fake TLS 1.3${RESET}"
-echo -e "${WHITE}          $(date '+%Y-%m-%d   %H:%M:%S %Z')${RESET}"
-echo ""
-separator
-}
-
-# ── Вывод инструкции подключения ──
-print_connection_info() {
-    local tg_link="tg://proxy?server=${SERVER_IP}&port=${PROXY_PORT}&secret=${SECRET}"
-    local https_link="https://t.me/proxy?server=${SERVER_IP}&port=${PROXY_PORT}&secret=${SECRET}"
-
-    echo ""
-    echo ""
-    echo -e "${GREEN}${BOLD}"
-    cat << 'SUCCESS'
-    ╔══════════════════════════════════════════════════════════╗
-    ║                                                          ║
-    ║        ✅  ПРОКСИ УСПЕШНО РАЗВЁРНУТ И РАБОТАЕТ!  ✅      ║
-    ║                                                          ║
-    ╚══════════════════════════════════════════════════════════╝
-SUCCESS
-    echo -e "${RESET}"
-
-    echo -e "  ${YELLOW}${BOLD}📝 Полезные команды:${RESET}"
-    echo ""
-    echo -e "    ${WHITE}Статус контейнера:${RESET}   docker ps -f name=${CONTAINER_NAME}"
-    echo -e "    ${WHITE}Логи (live):${RESET}         docker logs -f ${CONTAINER_NAME}"
-    echo -e "    ${WHITE}Перезапуск:${RESET}          docker restart ${CONTAINER_NAME}"
-    echo -e "    ${WHITE}Остановить:${RESET}          docker stop ${CONTAINER_NAME}"
-    echo -e "    ${WHITE}Удалить:${RESET}             docker rm -f ${CONTAINER_NAME}"
-    echo -e "    ${WHITE}Обновить mtg:${RESET}        docker pull ${MTG_IMAGE} && docker rm -f ${CONTAINER_NAME} && sudo ./deploy_mt.sh"
-    echo ""
-    separator
-    echo ""
-    echo -e "  ${MAGENTA}${BOLD}${ICON_SHIELD} Безопасность:${RESET}"
-    echo -e "    ${WHITE}• Трафик маскируется под TLS 1.3 к ${FAKETLS_DOMAIN}${RESET}"
-    if [[ "$SNI_MODE" == true ]]; then
-        echo -e "    ${WHITE}• ${BOLD}SNI-режим:${RESET}${WHITE} nginx stream мультиплексирует порт 443${RESET}"
-        echo -e "    ${WHITE}• Сайты и MTProto работают на одном порту — внешне не различимы${RESET}"
-        echo -e "    ${WHITE}• MTProto слушает только localhost:${MTG_INTERNAL_PORT} (недоступен снаружи)${RESET}"
-        echo -e "    ${WHITE}• Stream-конфиг: ${STREAM_CONF}${RESET}"
-    else
-        echo -e "    ${WHITE}• Порт ${PROXY_PORT} выглядит как стандартный HTTPS${RESET}"
-    fi
-    echo -e "    ${WHITE}• При открытии IP в браузере — пустая страница (нет следов MTProto)${RESET}"
-    echo -e "    ${WHITE}• Конфигурация сохранена в ${CONFIG_FILE}${RESET}"
-    echo ""
-    if [[ "$SNI_MODE" == true ]]; then
-        echo -e "  ${YELLOW}${BOLD}🔧 SNI-специфичные команды:${RESET}"
-        echo -e "    ${WHITE}Конфиг маршрутизатора:${RESET}  cat ${STREAM_CONF}"
-        echo -e "    ${WHITE}Бекап nginx:${RESET}           ls /etc/nginx_backup_*"
-        echo -e "    ${WHITE}Перезапуск nginx:${RESET}      systemctl restart nginx"
-        echo ""
-    fi
-    separator
-    echo ""
-    echo -e "${CYAN}${BOLD}  📱 КАК ПОДКЛЮЧИТЬ TELEGRAM:${RESET}"
-    separator
-    echo ""
-    echo -e "  ${WHITE}${BOLD}Способ 1 — Ссылка tg:// (рекомендуется)${RESET}"
-    echo -e "  ${WHITE}Откройте эту ссылку на устройстве с Telegram:${RESET}"
-    echo ""
-    echo -e "  ${GREEN}${BOLD}${tg_link}${RESET}"
-    echo ""
-    echo -e "  ${WHITE}${BOLD}Способ 2 — Веб-ссылка t.me${RESET}"
-    echo -e "  ${WHITE}Откройте в любом браузере:${RESET}"
-    echo ""
-    echo -e "  ${GREEN}${BOLD}${https_link}${RESET}"
-    echo ""
-    echo -e "  ${WHITE}${BOLD}Способ 3 — Ручная настройка${RESET}"
-    echo -e "  ${WHITE}Telegram → Настройки → Данные и память → Прокси → Добавить прокси${RESET}"
-    echo ""
-    echo -e "    ${CYAN}Сервер:${RESET}  ${BOLD}${SERVER_IP}${RESET}"
-    echo -e "    ${CYAN}Порт:${RESET}    ${BOLD}${PROXY_PORT}${RESET}"
-    echo -e "    ${CYAN}Секрет:${RESET}  ${BOLD}${SECRET}${RESET}"
-    echo ""
-    echo -e "  ${CYAN}Deployed at $(date '+%Y-%m-%d %H:%M:%S %Z') | mtg v2 FakeTLS${RESET}"
-    echo ""
-}
-
-# <<< END lib/output.sh <<<
 
 # >>> BEGIN lib/config.sh >>>
 # ══════════════════════════════════════════════════════════════════
@@ -201,7 +85,7 @@ SUCCESS
 # ══════════════════════════════════════════════════════════════════
 
 # Whitelist допустимых ключей конфига
-readonly CONFIG_KEYS="SERVER_IP|PROXY_PORT|FAKETLS_DOMAIN|EXTERNAL_FALLBACK|SECRET|CONTAINER_NAME|MTG_IMAGE|SNI_MODE|MTG_INTERNAL_PORT|STREAM_CONF"
+readonly CONFIG_KEYS="SERVER_IP|PROXY_PORT|FAKETLS_DOMAIN|EXTERNAL_FALLBACK|SECRET|CONTAINER_NAME|MTG_IMAGE|SNI_MODE|MTG_INTERNAL_PORT|STREAM_CONF|ENGINE"
 
 # ── Проверка наличия конфига ──
 config_exists() {
@@ -225,6 +109,7 @@ load_config_safe() {
             FAKETLS_DOMAIN)     FAKETLS_DOMAIN="$v" ;;
             SECRET)             SECRET="$v" ;;
             SNI_MODE)           SNI_MODE="$v" ;;
+            ENGINE)             PROXY_ENGINE="$v" ;;
             # Остальные ключи — в переменные, но не перезаписываем readonly
         esac
     done < <(grep -E "^(${CONFIG_KEYS})=" "$CONFIG_FILE" 2>/dev/null)
@@ -266,6 +151,7 @@ MTG_IMAGE=${MTG_IMAGE}
 SNI_MODE=${SNI_MODE}
 MTG_INTERNAL_PORT=${MTG_INTERNAL_PORT}
 STREAM_CONF=${STREAM_CONF}
+ENGINE=${PROXY_ENGINE}
 EOF
     chmod 600 "$CONFIG_FILE"
     log_ok "Конфигурация сохранена в ${BOLD}${CONFIG_FILE}${RESET}"
@@ -301,14 +187,248 @@ select_faketls_domain() {
     log_ok "FakeTLS домен: ${BOLD}${FAKETLS_DOMAIN}${RESET} (рандом из RF-списка)"
 }
 
+# ══════════════════════════════════════════════════════════════════
+# Telemt-специфичные функции конфигурации
+# ══════════════════════════════════════════════════════════════════
+
+# ── Конвертация ee-секрета mtg в 32-hex для Telemt ──
+# mtg secret: ee + hex(domain) + 32_hex_random → нужно извлечь 32 hex-символа
+# Если секрет уже 32 hex — возвращаем как есть
+convert_mtg_secret_to_telemt() {
+    local mtg_secret="$1"
+
+    # Если секрет уже в формате 32-hex (Telemt native) — возвращаем
+    if [[ ${#mtg_secret} -eq 32 ]] && [[ "$mtg_secret" =~ ^[0-9a-fA-F]{32}$ ]]; then
+        echo "$mtg_secret"
+        return 0
+    fi
+
+    # mtg ee-secret: первые 2 символа 'ee', потом hex(domain), потом 32 символа секрета
+    # Нам нужны первые 32 hex-символа после 'ee' префикса
+    # Но проще сгенерировать новый чистый 32-hex
+    # При миграции генерируем новый секрет — это необходимо, т.к. формат несовместим
+    local new_secret
+    new_secret=$(openssl rand -hex 16)
+    echo "$new_secret"
+}
+
+# ── Генерация config.toml для Telemt ──
+generate_telemt_config() {
+    log_step "${ICON_GEAR} Генерация конфигурации Telemt"
+
+    mkdir -p "${TELEMT_CONFIG_DIR}"
+
+    # Определяем порт для listener
+    local listen_port=443
+    if [[ "$SNI_MODE" == true ]]; then
+        listen_port=${MTG_INTERNAL_PORT}
+    fi
+
+    cat > "${TELEMT_CONFIG_FILE}" << TOMLEOF
+### Telemt Config — generated by deploy_mt.sh $(date '+%Y-%m-%d %H:%M:%S')
+log_level = "normal"
+
+[server.api]
+enabled = false
+
+[[server.listeners]]
+ip = "0.0.0.0"
+port = ${listen_port}
+
+[censorship]
+tls_domain = "${FAKETLS_DOMAIN}"
+mask = true
+tls_emulation = true
+tls_front_dir = "/app/tlsfront"
+
+[performance]
+download_buffer_size = 131072
+me_pool_size = 8
+workers = 2
+
+[access.users]
+admin = "${SECRET}"
+TOMLEOF
+
+    chmod 644 "${TELEMT_CONFIG_FILE}"
+    log_ok "Конфиг Telemt создан: ${BOLD}${TELEMT_CONFIG_FILE}${RESET}"
+    log_sub "TLS-домен: ${FAKETLS_DOMAIN}"
+    log_sub "Маскировка (TCP Splicing): включена"
+    log_sub "TLS-эмуляция: включена"
+}
+
 # <<< END lib/config.sh <<<
+
+# >>> BEGIN lib/system.sh >>>
+# ══════════════════════════════════════════════════════════════════
+# lib/system.sh — Системные проверки: root, OS, зависимости, Docker, IP
+# ══════════════════════════════════════════════════════════════════
+
+# ── Проверка root ──
+check_root() {
+    log_step "${ICON_SHIELD} Проверка привилегий"
+    if [[ $EUID -ne 0 ]]; then
+        log_err "Этот скрипт требует привилегий root."
+        log_sub "Запустите: ${BOLD}sudo ./deploy_mt.sh${RESET}"
+        exit 1
+    fi
+    log_ok "Запущен от root"
+}
+
+# ── Определение ОС ──
+detect_os() {
+    log_step "${ICON_GEAR} Определение операционной системы"
+
+    if [[ ! -f /etc/os-release ]]; then
+        log_err "Не удалось определить ОС. Поддерживаются Ubuntu/Debian."
+        exit 1
+    fi
+
+    source /etc/os-release
+    OS_NAME="${ID}"
+    OS_VERSION="${VERSION_ID:-unknown}"
+
+    log_ok "ОС: ${BOLD}${PRETTY_NAME}${RESET}"
+
+    case "$OS_NAME" in
+        ubuntu|debian)
+            log_sub "Поддерживаемая ОС ${ICON_CHECK}"
+            ;;
+        *)
+            log_warn "ОС ${OS_NAME} официально не тестировалась. Продолжаем..."
+            ;;
+    esac
+}
+
+# ── Проверка и установка зависимостей ──
+check_dependencies() {
+    log_step "${ICON_GEAR} Проверка зависимостей"
+
+    # Required — без них скрипт не работает
+    local required_deps=("curl" "iptables" "grep" "awk" "sed" "ss" "ip")
+    # Optional — деградация без ошибки
+    local optional_deps=("tcpdump" "openssl" "tshark")
+
+    local deps_missing=()
+
+    # Проверяем required
+    for dep in "${required_deps[@]}"; do
+        if command -v "$dep" &>/dev/null; then
+            log_ok "${dep} $(command -v "$dep")"
+        else
+            log_warn "${dep} — не найден"
+            deps_missing+=("$dep")
+        fi
+    done
+
+    # Проверяем optional (только warn)
+    for dep in "${optional_deps[@]}"; do
+        if command -v "$dep" &>/dev/null; then
+            log_ok "${dep} $(command -v "$dep")"
+        else
+            log_dim "${dep} — не найден (опционально)"
+        fi
+    done
+
+    # Установка отсутствующих required
+    if [[ ${#deps_missing[@]} -gt 0 ]]; then
+        # Маппинг бинарников к пакетам (ss/ip/tc → iproute2)
+        local pkgs_to_install=()
+        local pkg_name
+        for dep in "${deps_missing[@]}"; do
+            case "$dep" in
+                ss|ip|tc) pkg_name="iproute2" ;;
+                *) pkg_name="$dep" ;;
+            esac
+            # Дедупликация
+            if [[ ! " ${pkgs_to_install[*]} " =~ \ ${pkg_name}\  ]]; then
+                pkgs_to_install+=("$pkg_name")
+            fi
+        done
+        log_info "Установка недостающих: ${pkgs_to_install[*]}"
+        apt-get update -qq
+        apt-get install -y -qq "${pkgs_to_install[@]}"
+        log_ok "Зависимости установлены"
+    else
+        log_ok "Все базовые зависимости в порядке"
+    fi
+}
+
+# ── Docker — установка / проверка ──
+ensure_docker() {
+    log_step "${ICON_DOCKER} Docker"
+
+    if command -v docker &>/dev/null; then
+        local docker_ver
+        docker_ver=$(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')
+        log_ok "Docker уже установлен: ${BOLD}v${docker_ver}${RESET}"
+    else
+        log_info "Docker не найден. Устанавливаю..."
+        curl -fsSL https://get.docker.com | sh
+        log_ok "Docker установлен"
+    fi
+
+    # Убедимся, что демон запущен
+    if ! systemctl is-active --quiet docker; then
+        log_info "Запускаю Docker daemon..."
+        systemctl enable docker
+        systemctl start docker
+    fi
+    log_ok "Docker daemon запущен"
+
+    # Проверка socket
+    if docker info &>/dev/null; then
+        log_ok "Docker socket доступен"
+    else
+        log_err "Нет доступа к Docker socket"
+        exit 1
+    fi
+}
+
+# ── Определение внешнего IP ──
+detect_ip() {
+    log_step "${ICON_INFO} Определение внешнего IP-адреса"
+
+    # Если IP задан вручную через env, используем его
+    if [[ -n "${SERVER_IP:-}" ]]; then
+        log_ok "Внешний IP задан вручную: ${BOLD}${SERVER_IP}${RESET}"
+        return 0
+    fi
+
+    local services=("ifconfig.me" "api.ipify.org" "ipecho.net/plain" "icanhazip.com")
+
+    for svc in "${services[@]}"; do
+        SERVER_IP=$(curl -4 -s --max-time 5 "$svc" 2>/dev/null || true)
+        if [[ -n "$SERVER_IP" && "$SERVER_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            log_ok "Внешний IP: ${BOLD}${SERVER_IP}${RESET} (via ${svc})"
+            return 0
+        fi
+    done
+
+    log_err "Не удалось определить внешний IP."
+    log_sub "Укажите вручную: SERVER_IP=1.2.3.4 ./deploy_mt.sh"
+    exit 1
+}
+
+# ── Helper: определение сетевого интерфейса ──
+detect_network_interface() {
+    local iface
+    iface=$(ip route get 8.8.8.8 2>/dev/null | awk '{printf $5}')
+    if [[ -z "$iface" ]]; then
+        iface="eth0"
+    fi
+    echo "$iface"
+}
+
+# <<< END lib/system.sh <<<
 
 # >>> BEGIN lib/docker.sh >>>
 # ══════════════════════════════════════════════════════════════════
 # lib/docker.sh — Docker-логика: secret, контейнер, health check
+# Поддержка двух движков: mtg (Go, legacy) и telemt (Rust)
 # ══════════════════════════════════════════════════════════════════
 
-# ── Генерация FakeTLS секрета ──
+# ── Генерация FakeTLS секрета (MTG) ──
 generate_secret() {
     log_step "${ICON_KEY} Генерация FakeTLS секрета (домен: ${FAKETLS_DOMAIN})"
 
@@ -325,6 +445,22 @@ generate_secret() {
 
     log_ok "Секрет сгенерирован: ${BOLD}${SECRET:0:16}...${RESET}"
     log_dim "Полный секрет сохранён для ссылки ниже"
+}
+
+# ── Генерация секрета (Telemt) ──
+# Не требует Docker — использует openssl, формат: 32 hex-символа
+generate_secret_telemt() {
+    log_step "${ICON_KEY} Генерация Telemt секрета (домен: ${FAKETLS_DOMAIN})"
+
+    SECRET=$(openssl rand -hex 16)
+
+    if [[ -z "$SECRET" || ${#SECRET} -ne 32 ]]; then
+        log_err "Не удалось сгенерировать секрет. Проверьте openssl."
+        exit 1
+    fi
+
+    log_ok "Секрет (32-hex): ${BOLD}${SECRET:0:16}...${RESET}"
+    log_dim "Telemt использует прямой hex-секрет (без ee-префикса mtg)"
 }
 
 # ── Удаление старого контейнера ──
@@ -357,6 +493,33 @@ docker_run_mtg() {
         simple-run -n "${DNS_RESOLVER}" -i prefer-ipv4 "0.0.0.0:443" "${secret}"
 }
 
+# ── Единый helper запуска контейнера Telemt (Rust) ──
+docker_run_telemt() {
+    local port_mapping="$1"
+
+    # Создаём директории для кэша TLS-эмуляции и метрик
+    # 777 — контейнер работает под non-root UID, нужен write access
+    mkdir -p /root/.telemt/cache /root/.telemt/tlsfront
+    chmod 777 /root/.telemt/cache /root/.telemt/tlsfront
+
+    log_info "Вытягиваю образ ${TELEMT_IMAGE}..."
+    docker pull "${TELEMT_IMAGE}" 2>&1 | tail -1
+
+    docker run -d \
+        --name "${CONTAINER_NAME}" \
+        --restart unless-stopped \
+        --security-opt no-new-privileges \
+        --pids-limit 1024 \
+        --memory 256m \
+        --cpus 0.75 \
+        --ulimit nofile=65536:65536 \
+        -v "${TELEMT_CONFIG_FILE}:/app/config.toml:ro" \
+        -v "/root/.telemt/cache:/app/cache" \
+        -v "/root/.telemt/tlsfront:/app/tlsfront" \
+        -p "${port_mapping}" \
+        "${TELEMT_IMAGE}"
+}
+
 # ── Определение port mapping ──
 compose_port_mapping() {
     if [[ "$SNI_MODE" == true ]]; then
@@ -375,6 +538,13 @@ launch_container() {
     local port_mapping
     port_mapping=$(compose_port_mapping)
 
+    local engine_label="MTG v2 (Go)"
+    local image_name="${MTG_IMAGE}"
+    if [[ "$PROXY_ENGINE" == "telemt" ]]; then
+        engine_label="Telemt (Rust)"
+        image_name="${TELEMT_IMAGE}"
+    fi
+
     if [[ "$SNI_MODE" == true ]]; then
         log_info "Режим: ${BOLD}SNI-маршрутизация${RESET} (nginx stream → localhost:${MTG_INTERNAL_PORT})"
     else
@@ -382,15 +552,25 @@ launch_container() {
     fi
 
     log_info "Параметры запуска:"
-    log_sub "Образ:      ${MTG_IMAGE}"
+    log_sub "Движок:     ${BOLD}${engine_label}${RESET}"
+    log_sub "Образ:      ${image_name}"
     log_sub "Контейнер:  ${CONTAINER_NAME}"
     log_sub "Порт:       ${port_mapping}"
-    log_sub "DNS:        ${DNS_RESOLVER}"
     log_sub "FakeTLS:    ${FAKETLS_DOMAIN}"
-    log_sub "ulimit:     ${ULIMIT_NOFILE}"
+    if [[ "$PROXY_ENGINE" == "telemt" ]]; then
+        log_sub "TCP Splice: включен (защита от Active Probing)"
+        log_sub "ME Pool:    включен (быстрая загрузка медиа)"
+    else
+        log_sub "DNS:        ${DNS_RESOLVER}"
+        log_sub "ulimit:     ${ULIMIT_NOFILE}"
+    fi
     echo ""
 
-    docker_run_mtg "${SECRET}" "${port_mapping}"
+    if [[ "$PROXY_ENGINE" == "telemt" ]]; then
+        docker_run_telemt "${port_mapping}"
+    else
+        docker_run_mtg "${SECRET}" "${port_mapping}"
+    fi
 
     log_ok "Контейнер запущен"
 }
@@ -427,6 +607,7 @@ health_check() {
     image_id=$(docker inspect -f '{{.Image}}' "${CONTAINER_NAME}" | cut -c8-19)
 
     log_sub "Container ID:    ${BOLD}${container_id}${RESET}"
+    log_sub "Engine:          ${BOLD}${PROXY_ENGINE}${RESET}"
     log_sub "Started at:      ${uptime}"
     log_sub "Restart count:   ${restart_count}"
     log_sub "Image hash:      ${image_id}"
@@ -441,6 +622,131 @@ health_check() {
 }
 
 # <<< END lib/docker.sh <<<
+
+# >>> BEGIN lib/network.sh >>>
+# ══════════════════════════════════════════════════════════════════
+# lib/network.sh — Сетевой профиль: порт, stealth shaping, файрвол
+# ══════════════════════════════════════════════════════════════════
+
+# ── Проверка порта ──
+check_port() {
+    log_step "${ICON_SHIELD} Проверка порта ${PROXY_PORT}"
+
+    if ss -tlnp | grep -q ":${PROXY_PORT} "; then
+        local occupier process_name
+        occupier=$(ss -tlnp | grep ":${PROXY_PORT} " | awk '{print $NF}')
+        process_name=$(echo "$occupier" | grep -oP '"\K[^"]+' || echo "$occupier")
+
+        # Если это наш контейнер — пересоздадим
+        if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+            log_info "Порт занят нашим контейнером ${CONTAINER_NAME}."
+            log_info "Контейнер будет пересоздан."
+            return 0
+        fi
+
+        # Определяем — это nginx или что-то другое?
+        if echo "$process_name" | grep -qi "nginx"; then
+            log_warn "Порт 443 занят ${BOLD}Nginx${RESET}"
+            log_info "Включаю режим SNI-маршрутизации (nginx stream + ssl_preread)"
+            log_dim "И сайты, и MTProto будут работать на одном порту 443"
+            setup_nginx_sni_routing
+            return 0
+        fi
+
+        # Не nginx — fallback на 8443
+        log_warn "Порт ${BOLD}${PROXY_PORT}${RESET}${YELLOW} занят процессом: ${BOLD}${process_name}${RESET}"
+        log_info "Переключаюсь на порт ${BOLD}${FALLBACK_PORT}${RESET}..."
+
+        if ss -tlnp | grep -q ":${FALLBACK_PORT} "; then
+            log_err "Порт ${FALLBACK_PORT} тоже занят. Освободите один из портов: 443 или ${FALLBACK_PORT}."
+            exit 1
+        fi
+
+        PROXY_PORT="${FALLBACK_PORT}"
+        log_ok "Порт ${PROXY_PORT} свободен, используем его"
+        echo ""
+        log_warn "${BOLD}Порт ${PROXY_PORT} — не стандартный HTTPS.${RESET}"
+        log_dim "FakeTLS лучше всего маскирует трафик на порту 443."
+        log_dim "На порту ${PROXY_PORT} DPI/ТСПУ теоретически может заподозрить TLS,"
+        log_dim "но на практике для личного использования это работает нормально."
+    else
+        log_ok "Порт ${PROXY_PORT} свободен"
+    fi
+}
+
+# ── Stealth-профиль (MSS + sysctl, БЕЗ netem) ──
+apply_stealth_shaping() {
+    log_step "${ICON_GEAR} Применение Stealth-профиля (MSS + BBR)"
+
+    cat > "${SYSCTL_CONF}" << 'EOF'
+fs.file-max = 2097152
+net.core.somaxconn = 4096
+net.ipv4.tcp_max_syn_backlog = 4096
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_keepalive_time = 600
+net.ipv4.tcp_keepalive_intvl = 30
+net.ipv4.tcp_keepalive_probes = 5
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_notsent_lowat = 16384
+net.ipv4.tcp_slow_start_after_idle = 0
+EOF
+    sysctl --system &>/dev/null
+
+    local ETH_IF
+    ETH_IF=$(detect_network_interface)
+
+    log_info "Активный сетевой интерфейс: ${BOLD}${ETH_IF}${RESET}"
+
+    # MSS Clamping (против DPI анализа размеров пакетов)
+    iptables -t mangle -C POSTROUTING -p tcp --sport "${PROXY_PORT}" --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 850 2>/dev/null || \
+    iptables -t mangle -A POSTROUTING -p tcp --sport "${PROXY_PORT}" --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 850
+
+    iptables -t mangle -C PREROUTING -p tcp --dport "${PROXY_PORT}" --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 850 2>/dev/null || \
+    iptables -t mangle -A PREROUTING -p tcp --dport "${PROXY_PORT}" --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 850
+
+    # Удаляем tc netem если остался от старой версии (RTT fingerprint опасен)
+    tc qdisc del dev "${ETH_IF}" root 2>/dev/null || true
+
+    log_ok "Stealth: MSS=850 + BBR (netem удалён — RTT safe)"
+}
+
+# ── Настройка файрвола ──
+configure_firewall() {
+    log_step "${ICON_SHIELD} Настройка файрвола"
+
+    if command -v ufw &>/dev/null; then
+        if ufw status | grep -q "Status: active"; then
+            log_info "UFW активен, открываю порт ${PROXY_PORT}/tcp..."
+            ufw allow "${PROXY_PORT}/tcp" &>/dev/null
+            log_ok "Порт ${PROXY_PORT}/tcp открыт в UFW"
+        else
+            log_dim "UFW установлен, но не активен. Пропускаю."
+        fi
+    else
+        log_dim "UFW не установлен. Убедитесь, что порт ${PROXY_PORT} открыт в вашем файрволе."
+    fi
+}
+
+# ── Очистка сетевых правил (для uninstall) ──
+cleanup_network_rules() {
+    log_step "${ICON_GEAR} Очистка сетевых правил"
+
+    iptables -t mangle -D POSTROUTING -p tcp --sport "${PROXY_PORT}" --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 850 2>/dev/null || true
+    iptables -t mangle -D PREROUTING -p tcp --dport "${PROXY_PORT}" --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 850 2>/dev/null || true
+    log_ok "Правила iptables MSS удалены"
+
+    rm -f "${SYSCTL_CONF}"
+    sysctl --system &>/dev/null
+    log_ok "sysctl-профиль удалён"
+
+    local ETH_IF
+    ETH_IF=$(detect_network_interface)
+    tc qdisc del dev "${ETH_IF}" root 2>/dev/null || true
+}
+
+# <<< END lib/network.sh <<<
 
 # >>> BEGIN lib/nginx.sh >>>
 # ══════════════════════════════════════════════════════════════════
@@ -810,299 +1116,43 @@ setup_nginx_sni_routing() {
 
 # <<< END lib/nginx.sh <<<
 
-# >>> BEGIN lib/network.sh >>>
-# ══════════════════════════════════════════════════════════════════
-# lib/network.sh — Сетевой профиль: порт, stealth shaping, файрвол
-# ══════════════════════════════════════════════════════════════════
-
-# ── Проверка порта ──
-check_port() {
-    log_step "${ICON_SHIELD} Проверка порта ${PROXY_PORT}"
-
-    if ss -tlnp | grep -q ":${PROXY_PORT} "; then
-        local occupier process_name
-        occupier=$(ss -tlnp | grep ":${PROXY_PORT} " | awk '{print $NF}')
-        process_name=$(echo "$occupier" | grep -oP '"\K[^"]+' || echo "$occupier")
-
-        # Если это наш контейнер — пересоздадим
-        if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-            log_info "Порт занят нашим контейнером ${CONTAINER_NAME}."
-            log_info "Контейнер будет пересоздан."
-            return 0
-        fi
-
-        # Определяем — это nginx или что-то другое?
-        if echo "$process_name" | grep -qi "nginx"; then
-            log_warn "Порт 443 занят ${BOLD}Nginx${RESET}"
-            log_info "Включаю режим SNI-маршрутизации (nginx stream + ssl_preread)"
-            log_dim "И сайты, и MTProto будут работать на одном порту 443"
-            setup_nginx_sni_routing
-            return 0
-        fi
-
-        # Не nginx — fallback на 8443
-        log_warn "Порт ${BOLD}${PROXY_PORT}${RESET}${YELLOW} занят процессом: ${BOLD}${process_name}${RESET}"
-        log_info "Переключаюсь на порт ${BOLD}${FALLBACK_PORT}${RESET}..."
-
-        if ss -tlnp | grep -q ":${FALLBACK_PORT} "; then
-            log_err "Порт ${FALLBACK_PORT} тоже занят. Освободите один из портов: 443 или ${FALLBACK_PORT}."
-            exit 1
-        fi
-
-        PROXY_PORT="${FALLBACK_PORT}"
-        log_ok "Порт ${PROXY_PORT} свободен, используем его"
-        echo ""
-        log_warn "${BOLD}Порт ${PROXY_PORT} — не стандартный HTTPS.${RESET}"
-        log_dim "FakeTLS лучше всего маскирует трафик на порту 443."
-        log_dim "На порту ${PROXY_PORT} DPI/ТСПУ теоретически может заподозрить TLS,"
-        log_dim "но на практике для личного использования это работает нормально."
-    else
-        log_ok "Порт ${PROXY_PORT} свободен"
-    fi
-}
-
-# ── Stealth-профиль (MSS + sysctl, БЕЗ netem) ──
-apply_stealth_shaping() {
-    log_step "${ICON_GEAR} Применение Stealth-профиля (MSS + BBR)"
-
-    cat > "${SYSCTL_CONF}" << 'EOF'
-fs.file-max = 2097152
-net.core.somaxconn = 4096
-net.ipv4.tcp_max_syn_backlog = 4096
-net.ipv4.tcp_syncookies = 1
-net.ipv4.tcp_fin_timeout = 15
-net.ipv4.tcp_keepalive_time = 600
-net.ipv4.tcp_keepalive_intvl = 30
-net.ipv4.tcp_keepalive_probes = 5
-net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr
-net.ipv4.tcp_notsent_lowat = 16384
-net.ipv4.tcp_slow_start_after_idle = 0
-EOF
-    sysctl --system &>/dev/null
-
-    local ETH_IF
-    ETH_IF=$(detect_network_interface)
-
-    log_info "Активный сетевой интерфейс: ${BOLD}${ETH_IF}${RESET}"
-
-    # MSS Clamping (против DPI анализа размеров пакетов)
-    iptables -t mangle -C POSTROUTING -p tcp --sport "${PROXY_PORT}" --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 850 2>/dev/null || \
-    iptables -t mangle -A POSTROUTING -p tcp --sport "${PROXY_PORT}" --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 850
-
-    iptables -t mangle -C PREROUTING -p tcp --dport "${PROXY_PORT}" --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 850 2>/dev/null || \
-    iptables -t mangle -A PREROUTING -p tcp --dport "${PROXY_PORT}" --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 850
-
-    # Удаляем tc netem если остался от старой версии (RTT fingerprint опасен)
-    tc qdisc del dev "${ETH_IF}" root 2>/dev/null || true
-
-    log_ok "Stealth: MSS=850 + BBR (netem удалён — RTT safe)"
-}
-
-# ── Настройка файрвола ──
-configure_firewall() {
-    log_step "${ICON_SHIELD} Настройка файрвола"
-
-    if command -v ufw &>/dev/null; then
-        if ufw status | grep -q "Status: active"; then
-            log_info "UFW активен, открываю порт ${PROXY_PORT}/tcp..."
-            ufw allow "${PROXY_PORT}/tcp" &>/dev/null
-            log_ok "Порт ${PROXY_PORT}/tcp открыт в UFW"
-        else
-            log_dim "UFW установлен, но не активен. Пропускаю."
-        fi
-    else
-        log_dim "UFW не установлен. Убедитесь, что порт ${PROXY_PORT} открыт в вашем файрволе."
-    fi
-}
-
-# ── Очистка сетевых правил (для uninstall) ──
-cleanup_network_rules() {
-    log_step "${ICON_GEAR} Очистка сетевых правил"
-
-    iptables -t mangle -D POSTROUTING -p tcp --sport "${PROXY_PORT}" --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 850 2>/dev/null || true
-    iptables -t mangle -D PREROUTING -p tcp --dport "${PROXY_PORT}" --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 850 2>/dev/null || true
-    log_ok "Правила iptables MSS удалены"
-
-    rm -f "${SYSCTL_CONF}"
-    sysctl --system &>/dev/null
-    log_ok "sysctl-профиль удалён"
-
-    local ETH_IF
-    ETH_IF=$(detect_network_interface)
-    tc qdisc del dev "${ETH_IF}" root 2>/dev/null || true
-}
-
-# <<< END lib/network.sh <<<
-
-# >>> BEGIN lib/system.sh >>>
-# ══════════════════════════════════════════════════════════════════
-# lib/system.sh — Системные проверки: root, OS, зависимости, Docker, IP
-# ══════════════════════════════════════════════════════════════════
-
-# ── Проверка root ──
-check_root() {
-    log_step "${ICON_SHIELD} Проверка привилегий"
-    if [[ $EUID -ne 0 ]]; then
-        log_err "Этот скрипт требует привилегий root."
-        log_sub "Запустите: ${BOLD}sudo ./deploy_mt.sh${RESET}"
-        exit 1
-    fi
-    log_ok "Запущен от root"
-}
-
-# ── Определение ОС ──
-detect_os() {
-    log_step "${ICON_GEAR} Определение операционной системы"
-
-    if [[ ! -f /etc/os-release ]]; then
-        log_err "Не удалось определить ОС. Поддерживаются Ubuntu/Debian."
-        exit 1
-    fi
-
-    source /etc/os-release
-    OS_NAME="${ID}"
-    OS_VERSION="${VERSION_ID:-unknown}"
-
-    log_ok "ОС: ${BOLD}${PRETTY_NAME}${RESET}"
-
-    case "$OS_NAME" in
-        ubuntu|debian)
-            log_sub "Поддерживаемая ОС ${ICON_CHECK}"
-            ;;
-        *)
-            log_warn "ОС ${OS_NAME} официально не тестировалась. Продолжаем..."
-            ;;
-    esac
-}
-
-# ── Проверка и установка зависимостей ──
-check_dependencies() {
-    log_step "${ICON_GEAR} Проверка зависимостей"
-
-    # Required — без них скрипт не работает
-    local required_deps=("curl" "iptables" "grep" "awk" "sed" "ss" "ip")
-    # Optional — деградация без ошибки
-    local optional_deps=("tcpdump" "openssl" "tshark")
-
-    local deps_missing=()
-
-    # Проверяем required
-    for dep in "${required_deps[@]}"; do
-        if command -v "$dep" &>/dev/null; then
-            log_ok "${dep} $(command -v "$dep")"
-        else
-            log_warn "${dep} — не найден"
-            deps_missing+=("$dep")
-        fi
-    done
-
-    # Проверяем optional (только warn)
-    for dep in "${optional_deps[@]}"; do
-        if command -v "$dep" &>/dev/null; then
-            log_ok "${dep} $(command -v "$dep")"
-        else
-            log_dim "${dep} — не найден (опционально)"
-        fi
-    done
-
-    # Установка отсутствующих required
-    if [[ ${#deps_missing[@]} -gt 0 ]]; then
-        # Маппинг бинарников к пакетам (ss/ip/tc → iproute2)
-        local pkgs_to_install=()
-        local pkg_name
-        for dep in "${deps_missing[@]}"; do
-            case "$dep" in
-                ss|ip|tc) pkg_name="iproute2" ;;
-                *) pkg_name="$dep" ;;
-            esac
-            # Дедупликация
-            if [[ ! " ${pkgs_to_install[*]} " =~ \ ${pkg_name}\  ]]; then
-                pkgs_to_install+=("$pkg_name")
-            fi
-        done
-        log_info "Установка недостающих: ${pkgs_to_install[*]}"
-        apt-get update -qq
-        apt-get install -y -qq "${pkgs_to_install[@]}"
-        log_ok "Зависимости установлены"
-    else
-        log_ok "Все базовые зависимости в порядке"
-    fi
-}
-
-# ── Docker — установка / проверка ──
-ensure_docker() {
-    log_step "${ICON_DOCKER} Docker"
-
-    if command -v docker &>/dev/null; then
-        local docker_ver
-        docker_ver=$(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')
-        log_ok "Docker уже установлен: ${BOLD}v${docker_ver}${RESET}"
-    else
-        log_info "Docker не найден. Устанавливаю..."
-        curl -fsSL https://get.docker.com | sh
-        log_ok "Docker установлен"
-    fi
-
-    # Убедимся, что демон запущен
-    if ! systemctl is-active --quiet docker; then
-        log_info "Запускаю Docker daemon..."
-        systemctl enable docker
-        systemctl start docker
-    fi
-    log_ok "Docker daemon запущен"
-
-    # Проверка socket
-    if docker info &>/dev/null; then
-        log_ok "Docker socket доступен"
-    else
-        log_err "Нет доступа к Docker socket"
-        exit 1
-    fi
-}
-
-# ── Определение внешнего IP ──
-detect_ip() {
-    log_step "${ICON_INFO} Определение внешнего IP-адреса"
-
-    # Если IP задан вручную через env, используем его
-    if [[ -n "${SERVER_IP:-}" ]]; then
-        log_ok "Внешний IP задан вручную: ${BOLD}${SERVER_IP}${RESET}"
-        return 0
-    fi
-
-    local services=("ifconfig.me" "api.ipify.org" "ipecho.net/plain" "icanhazip.com")
-
-    for svc in "${services[@]}"; do
-        SERVER_IP=$(curl -4 -s --max-time 5 "$svc" 2>/dev/null || true)
-        if [[ -n "$SERVER_IP" && "$SERVER_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            log_ok "Внешний IP: ${BOLD}${SERVER_IP}${RESET} (via ${svc})"
-            return 0
-        fi
-    done
-
-    log_err "Не удалось определить внешний IP."
-    log_sub "Укажите вручную: SERVER_IP=1.2.3.4 ./deploy_mt.sh"
-    exit 1
-}
-
-# ── Helper: определение сетевого интерфейса ──
-detect_network_interface() {
-    local iface
-    iface=$(ip route get 8.8.8.8 2>/dev/null | awk '{printf $5}')
-    if [[ -z "$iface" ]]; then
-        iface="eth0"
-    fi
-    echo "$iface"
-}
-
-# <<< END lib/system.sh <<<
-
 # >>> BEGIN lib/actions.sh >>>
 # ══════════════════════════════════════════════════════════════════
 # lib/actions.sh — Высокоуровневые пользовательские действия
-# check_existing, show_status, uninstall_all
+# check_existing, show_status, uninstall_all, migrate, engine select
 # ══════════════════════════════════════════════════════════════════
+
+# ── Выбор движка при свежей установке ──
+select_engine() {
+    echo ""
+    echo -e "  ${CYAN}${BOLD}╔══════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "  ${CYAN}${BOLD}║          Выберите движок MTProto-прокси                  ║${RESET}"
+    echo -e "  ${CYAN}${BOLD}╚══════════════════════════════════════════════════════════╝${RESET}"
+    echo ""
+    echo -e "  ${GREEN}1${RESET}) ${BOLD}Telemt (Rust)${RESET}  — ${GREEN}РЕКОМЕНДУЕТСЯ${RESET}"
+    echo -e "     ${DIM}TCP Splicing, быстрая загрузка медиа, TLS-эмуляция${RESET}"
+    echo ""
+    echo -e "  ${CYAN}2${RESET}) ${BOLD}MTG v2 (Go)${RESET}    — Legacy"
+    echo -e "     ${DIM}Классический движок, проверенный временем${RESET}"
+    echo ""
+    echo -ne "  ${CYAN}Выбор [1-2] (по умолчанию 1):${RESET} "
+    read -r engine_choice
+
+    case "${engine_choice:-1}" in
+        1)
+            PROXY_ENGINE="telemt"
+            log_ok "Выбран движок: ${BOLD}Telemt (Rust)${RESET}"
+            ;;
+        2)
+            PROXY_ENGINE="mtg"
+            log_ok "Выбран движок: ${BOLD}MTG v2 (Go)${RESET}"
+            ;;
+        *)
+            PROXY_ENGINE="telemt"
+            log_ok "Выбран движок по умолчанию: ${BOLD}Telemt (Rust)${RESET}"
+            ;;
+    esac
+}
 
 # ── Проверка существующей установки ──
 check_existing() {
@@ -1126,6 +1176,7 @@ check_existing() {
     echo -e "  ${CYAN}Сервер:${RESET}     ${BOLD}${SERVER_IP}${RESET}"
     echo -e "  ${CYAN}Порт:${RESET}       ${BOLD}${PROXY_PORT}${RESET}"
     echo -e "  ${CYAN}Контейнер:${RESET}  ${BOLD}${CONTAINER_NAME}${RESET} — ${status}"
+    echo -e "  ${CYAN}Движок:${RESET}     ${BOLD}${PROXY_ENGINE:-mtg}${RESET}"
     echo -e "  ${CYAN}SNI-режим:${RESET}  ${BOLD}${SNI_MODE:-false}${RESET}"
     echo -e "  ${CYAN}FakeTLS:${RESET}    ${BOLD}${FAKETLS_DOMAIN}${RESET}"
     echo ""
@@ -1133,13 +1184,16 @@ check_existing() {
     echo ""
     echo -e "  ${WHITE}${BOLD}Что сделать?${RESET}"
     echo ""
-    echo -e "  ${CYAN}1${RESET}) ${BOLD}Обновить образ${RESET}  — pull новый mtg, пересоздать контейнер (секрет сохранится)"
-    echo -e "  ${CYAN}2${RESET}) ${BOLD}Переустановить${RESET} — полная переустановка с нуля (новый секрет)"
-    echo -e "  ${CYAN}3${RESET}) ${BOLD}Удалить всё${RESET}    — убрать прокси и вернуть nginx как было"
-    echo -e "  ${CYAN}4${RESET}) ${BOLD}Статус${RESET}         — показать ссылки подключения и логи"
-    echo -e "  ${CYAN}5${RESET}) ${BOLD}Выход${RESET}"
+    echo -e "  ${CYAN}1${RESET}) ${BOLD}Обновить образ${RESET}  — pull новый образ, пересоздать контейнер (секрет сохранится)"
+    if [[ "${PROXY_ENGINE:-mtg}" == "mtg" ]]; then
+        echo -e "  ${GREEN}2${RESET}) ${BOLD}⚡ Мигрировать на Telemt${RESET} — переход на Rust-движок (ссылки обновятся)"
+    fi
+    echo -e "  ${CYAN}3${RESET}) ${BOLD}Переустановить${RESET} — полная переустановка с нуля (новый секрет)"
+    echo -e "  ${CYAN}4${RESET}) ${BOLD}Удалить всё${RESET}    — убрать прокси и вернуть nginx как было"
+    echo -e "  ${CYAN}5${RESET}) ${BOLD}Статус${RESET}         — показать ссылки подключения и логи"
+    echo -e "  ${CYAN}6${RESET}) ${BOLD}Выход${RESET}"
     echo ""
-    echo -ne "  ${CYAN}Выбор [1-5]:${RESET} "
+    echo -ne "  ${CYAN}Выбор [1-6]:${RESET} "
     read -r choice
 
     case "$choice" in
@@ -1148,18 +1202,27 @@ check_existing() {
             exit 0
             ;;
         2)
+            if [[ "${PROXY_ENGINE:-mtg}" == "mtg" ]]; then
+                migrate_to_telemt
+                exit 0
+            else
+                log_err "Неверный выбор."
+                exit 1
+            fi
+            ;;
+        3)
             reinstall_flow
             return 1  # Продолжить как свежая установка
             ;;
-        3)
+        4)
             uninstall_all
             exit 0
             ;;
-        4)
+        5)
             show_status
             exit 0
             ;;
-        5)
+        6)
             log_info "Выход."
             exit 0
             ;;
@@ -1172,13 +1235,61 @@ check_existing() {
 
 # ── Обновление образа ──
 update_flow() {
-    log_step "${ICON_ROCKET} Обновление образа MTProto"
-    docker pull "${MTG_IMAGE}" 2>&1 | tail -3
+    local image_to_pull="${MTG_IMAGE}"
+    if [[ "$PROXY_ENGINE" == "telemt" ]]; then
+        image_to_pull="${TELEMT_IMAGE}"
+    fi
+
+    log_step "${ICON_ROCKET} Обновление образа (${PROXY_ENGINE})"
+    docker pull "${image_to_pull}" 2>&1 | tail -3
     docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+
+    if [[ "$PROXY_ENGINE" == "telemt" ]]; then
+        generate_telemt_config
+    fi
+
     launch_container
     health_check
     save_config
     log_ok "Образ обновлён, контейнер пересоздан"
+    print_connection_info
+}
+
+# ── Миграция с MTG v2 на Telemt ──
+migrate_to_telemt() {
+    log_step "${ICON_ROCKET} Миграция MTG v2 → Telemt (Rust)"
+
+    echo ""
+    echo -e "  ${YELLOW}${BOLD}Что произойдёт:${RESET}"
+    echo -e "    ${WHITE}1. Старый контейнер mtg будет остановлен${RESET}"
+    echo -e "    ${WHITE}2. Сгенерируется новый секрет (формат Telemt: 32-hex)${RESET}"
+    echo -e "    ${WHITE}3. Запустится контейнер Telemt (Rust)${RESET}"
+    echo -e "    ${WHITE}4. ${BOLD}Ссылки изменятся${RESET}${WHITE} — нужно будет обновить на устройствах${RESET}"
+    echo ""
+    echo -ne "  ${CYAN}Продолжить? [y/N]:${RESET} "
+    read -r confirm
+    if [[ "${confirm,,}" != "y" && "${confirm,,}" != "д" ]]; then
+        log_info "Миграция отменена."
+        return 0
+    fi
+
+    # 1. Генерируем новый секрет
+    PROXY_ENGINE="telemt"
+    generate_secret_telemt
+
+    # 2. Генерируем config.toml
+    generate_telemt_config
+
+    # 3. Пересоздаём контейнер
+    docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+    launch_container
+    health_check
+
+    # 4. Сохраняем конфиг с новым ENGINE
+    save_config
+    install_rotate_script
+
+    log_ok "Миграция завершена! Движок: ${BOLD}Telemt (Rust)${RESET}"
     print_connection_info
 }
 
@@ -1348,6 +1459,140 @@ ROTATE_EOF
 
 # <<< END lib/actions.sh <<<
 
+# >>> BEGIN lib/output.sh >>>
+# ══════════════════════════════════════════════════════════════════
+# lib/output.sh — Presentation и UX: banner, ссылки подключения
+# ══════════════════════════════════════════════════════════════════
+
+# ── ASCII-баннер ──
+show_banner() {
+cat << 'BANNER'
+
+BANNER
+echo -e "${CYAN}${BOLD}"
+cat << 'ASCII'
+    ╔═══════════════════════════════════════════════════════════════════╗
+    ║                                                                   ║
+    ║   ███╗   ███╗████████╗██████╗ ██████╗  ██████╗ ████████╗ ██████╗  ║
+    ║   ████╗ ████║╚══██╔══╝██╔══██╗██╔══██╗██╔═══██╗╚══██╔══╝██╔═══██╗ ║
+    ║   ██╔████╔██║   ██║   ██████╔╝██████╔╝██║   ██║   ██║   ██║   ██║ ║
+    ║   ██║╚██╔╝██║   ██║   ██╔═══╝ ██╔══██╗██║   ██║   ██║   ██║   ██║ ║
+    ║   ██║ ╚═╝ ██║   ██║   ██║     ██║  ██║╚██████╔╝   ██║   ╚██████╔╝ ║
+    ║   ╚═╝     ╚═╝   ╚═╝   ╚═╝     ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝  ║
+    ║                                                                   ║
+    ║                    ███╗   ██╗███████╗██╗  ██╗                     ║
+    ║                    ████╗  ██║╚══███╔╝██║ ██╔╝                     ║
+    ║                    ██╔██╗ ██║  ███╔╝ █████╔╝                      ║
+    ║                    ██║╚██╗██║ ███╔╝  ██╔═██╗                      ║
+    ║                    ██║ ╚████║███████╗██║  ██╗                     ║
+    ║                    ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝                     ║
+    ║                                                                   ║
+    ╚═══════════════════════════════════════════════════════════════════╝
+ASCII
+echo -e "${RESET}"
+echo -e "${WHITE}${BOLD}       ⚡ Telegram MTProto FakeTLS Proxy Deployer ⚡${RESET}"
+echo -e "${CYAN}          ${PROXY_ENGINE:-mtg}  ·  Docker  ·  Fake TLS 1.3${RESET}"
+echo -e "${WHITE}          $(date '+%Y-%m-%d   %H:%M:%S %Z')${RESET}"
+echo ""
+separator
+}
+
+# ── Вывод инструкции подключения ──
+print_connection_info() {
+    # Для FakeTLS ссылок нужен формат: ee + secret + hex(domain)
+    local link_secret="${SECRET}"
+    if [[ "$PROXY_ENGINE" == "telemt" ]]; then
+        local hex_domain
+        hex_domain=$(printf '%s' "${FAKETLS_DOMAIN}" | xxd -p -c 256)
+        link_secret="ee${SECRET}${hex_domain}"
+    fi
+
+    local tg_link="tg://proxy?server=${SERVER_IP}&port=${PROXY_PORT}&secret=${link_secret}"
+    local https_link="https://t.me/proxy?server=${SERVER_IP}&port=${PROXY_PORT}&secret=${link_secret}"
+
+    echo ""
+    echo ""
+    echo -e "${GREEN}${BOLD}"
+    cat << 'SUCCESS'
+    ╔══════════════════════════════════════════════════════════╗
+    ║                                                          ║
+    ║        ✅  ПРОКСИ УСПЕШНО РАЗВЁРНУТ И РАБОТАЕТ!  ✅      ║
+    ║                                                          ║
+    ╚══════════════════════════════════════════════════════════╝
+SUCCESS
+    echo -e "${RESET}"
+
+    echo -e "  ${YELLOW}${BOLD}📝 Полезные команды:${RESET}"
+    echo ""
+    echo -e "    ${WHITE}Статус контейнера:${RESET}   docker ps -f name=${CONTAINER_NAME}"
+    echo -e "    ${WHITE}Логи (live):${RESET}         docker logs -f ${CONTAINER_NAME}"
+    echo -e "    ${WHITE}Перезапуск:${RESET}          docker restart ${CONTAINER_NAME}"
+    echo -e "    ${WHITE}Остановить:${RESET}          docker stop ${CONTAINER_NAME}"
+    echo -e "    ${WHITE}Удалить:${RESET}             docker rm -f ${CONTAINER_NAME}"
+    if [[ "$PROXY_ENGINE" == "telemt" ]]; then
+        echo -e "    ${WHITE}Обновить:${RESET}            docker pull ${TELEMT_IMAGE} && docker rm -f ${CONTAINER_NAME} && sudo ./deploy_mt.sh"
+    else
+        echo -e "    ${WHITE}Обновить:${RESET}            docker pull ${MTG_IMAGE} && docker rm -f ${CONTAINER_NAME} && sudo ./deploy_mt.sh"
+    fi
+    echo ""
+    separator
+    echo ""
+    echo -e "  ${MAGENTA}${BOLD}${ICON_SHIELD} Безопасность:${RESET}"
+    echo -e "    ${WHITE}• Трафик маскируется под TLS 1.3 к ${FAKETLS_DOMAIN}${RESET}"
+    if [[ "$SNI_MODE" == true ]]; then
+        echo -e "    ${WHITE}• ${BOLD}SNI-режим:${RESET}${WHITE} nginx stream мультиплексирует порт 443${RESET}"
+        echo -e "    ${WHITE}• Сайты и MTProto работают на одном порту — внешне не различимы${RESET}"
+        echo -e "    ${WHITE}• MTProto слушает только localhost:${MTG_INTERNAL_PORT} (недоступен снаружи)${RESET}"
+        echo -e "    ${WHITE}• Stream-конфиг: ${STREAM_CONF}${RESET}"
+    else
+        echo -e "    ${WHITE}• Порт ${PROXY_PORT} выглядит как стандартный HTTPS${RESET}"
+    fi
+    echo -e "    ${WHITE}• При открытии IP в браузере — пустая страница (нет следов MTProto)${RESET}"
+    if [[ "$PROXY_ENGINE" == "telemt" ]]; then
+        echo -e "    ${WHITE}• ${BOLD}TCP Splicing:${RESET}${WHITE} при сканировании возвращается реальный сайт${RESET}"
+        echo -e "    ${WHITE}• ${BOLD}ME Pool:${RESET}${WHITE} быстрая загрузка фото/видео в Telegram${RESET}"
+    fi
+    echo -e "    ${WHITE}• Конфигурация сохранена в ${CONFIG_FILE}${RESET}"
+    echo ""
+    if [[ "$SNI_MODE" == true ]]; then
+        echo -e "  ${YELLOW}${BOLD}🔧 SNI-специфичные команды:${RESET}"
+        echo -e "    ${WHITE}Конфиг маршрутизатора:${RESET}  cat ${STREAM_CONF}"
+        echo -e "    ${WHITE}Бекап nginx:${RESET}           ls /etc/nginx_backup_*"
+        echo -e "    ${WHITE}Перезапуск nginx:${RESET}      systemctl restart nginx"
+        echo ""
+    fi
+    separator
+    echo ""
+    echo -e "${CYAN}${BOLD}  📱 КАК ПОДКЛЮЧИТЬ TELEGRAM:${RESET}"
+    separator
+    echo ""
+    echo -e "  ${WHITE}${BOLD}Способ 1 — Ссылка tg:// (рекомендуется)${RESET}"
+    echo -e "  ${WHITE}Откройте эту ссылку на устройстве с Telegram:${RESET}"
+    echo ""
+    echo -e "  ${GREEN}${BOLD}${tg_link}${RESET}"
+    echo ""
+    echo -e "  ${WHITE}${BOLD}Способ 2 — Веб-ссылка t.me${RESET}"
+    echo -e "  ${WHITE}Откройте в любом браузере:${RESET}"
+    echo ""
+    echo -e "  ${GREEN}${BOLD}${https_link}${RESET}"
+    echo ""
+    echo -e "  ${WHITE}${BOLD}Способ 3 — Ручная настройка${RESET}"
+    echo -e "  ${WHITE}Telegram → Настройки → Данные и память → Прокси → Добавить прокси${RESET}"
+    echo ""
+    echo -e "    ${CYAN}Сервер:${RESET}  ${BOLD}${SERVER_IP}${RESET}"
+    echo -e "    ${CYAN}Порт:${RESET}    ${BOLD}${PROXY_PORT}${RESET}"
+    echo -e "    ${CYAN}Секрет:${RESET}  ${BOLD}${link_secret}${RESET}"
+    echo ""
+    local engine_label="mtg v2"
+    if [[ "$PROXY_ENGINE" == "telemt" ]]; then
+        engine_label="Telemt (Rust)"
+    fi
+    echo -e "  ${CYAN}Deployed at $(date '+%Y-%m-%d %H:%M:%S %Z') | ${engine_label} FakeTLS${RESET}"
+    echo ""
+}
+
+# <<< END lib/output.sh <<<
+
 # >>> BEGIN lib/main.sh >>>
 # ══════════════════════════════════════════════════════════════════
 # lib/main.sh — Orchestration entrypoint
@@ -1363,14 +1608,24 @@ main() {
         exit 0  # Действие выполнено внутри check_existing
     fi
 
-    # Свежая установка — 18 шагов
+    # Свежая установка
     detect_os
     check_dependencies
     ensure_docker
     detect_ip
+    select_engine
     select_faketls_domain
-    generate_secret
-    check_port
+
+    # Генерация секрета и конфига — зависит от движка
+    if [[ "$PROXY_ENGINE" == "telemt" ]]; then
+        generate_secret_telemt
+        check_port
+        generate_telemt_config
+    else
+        generate_secret
+        check_port
+    fi
+
     apply_stealth_shaping
     launch_container
     health_check
