@@ -65,53 +65,44 @@ check_existing() {
     echo ""
     echo -e "  ${WHITE}${BOLD}Что сделать?${RESET}"
     echo ""
-    echo -e "  ${CYAN}1${RESET}) ${BOLD}Обновить образ${RESET}  — pull новый образ, пересоздать контейнер (секрет сохранится)"
+
+    # Динамическая нумерация: если миграция скрыта, сдвигаем номера
+    local n=1
+    local opt_update=$n;       echo -e "  ${CYAN}${n}${RESET}) ${BOLD}Обновить образ${RESET}  — pull новый образ, пересоздать контейнер (секрет сохранится)"; ((n++))
+    local opt_migrate=0
     if [[ "${PROXY_ENGINE:-mtg}" == "mtg" ]]; then
-        echo -e "  ${GREEN}2${RESET}) ${BOLD}⚡ Мигрировать на Telemt${RESET} — переход на Rust-движок (ссылки обновятся)"
+        opt_migrate=$n; echo -e "  ${GREEN}${n}${RESET}) ${BOLD}⚡ Мигрировать на Telemt${RESET} — переход на Rust-движок (ссылки обновятся)"; ((n++))
     fi
-    echo -e "  ${CYAN}3${RESET}) ${BOLD}Переустановить${RESET} — полная переустановка с нуля (новый секрет)"
-    echo -e "  ${CYAN}4${RESET}) ${BOLD}Удалить всё${RESET}    — убрать прокси и вернуть nginx как было"
-    echo -e "  ${CYAN}5${RESET}) ${BOLD}Статус${RESET}         — показать ссылки подключения и логи"
-    echo -e "  ${CYAN}6${RESET}) ${BOLD}Выход${RESET}"
+    local opt_reinstall=$n;    echo -e "  ${CYAN}${n}${RESET}) ${BOLD}Переустановить${RESET} — полная переустановка с нуля (новый секрет)"; ((n++))
+    local opt_uninstall=$n;    echo -e "  ${CYAN}${n}${RESET}) ${BOLD}Удалить всё${RESET}    — убрать прокси и вернуть nginx как было"; ((n++))
+    local opt_status=$n;       echo -e "  ${CYAN}${n}${RESET}) ${BOLD}Статус${RESET}         — показать ссылки подключения и логи"; ((n++))
+    local opt_exit=$n;         echo -e "  ${CYAN}${n}${RESET}) ${BOLD}Выход${RESET}"
     echo ""
-    echo -ne "  ${CYAN}Выбор [1-6]:${RESET} "
+    echo -ne "  ${CYAN}Выбор [1-${n}]:${RESET} "
     read -r choice
 
-    case "$choice" in
-        1)
-            update_flow
-            exit 0
-            ;;
-        2)
-            if [[ "${PROXY_ENGINE:-mtg}" == "mtg" ]]; then
-                migrate_to_telemt
-                exit 0
-            else
-                log_err "Неверный выбор."
-                exit 1
-            fi
-            ;;
-        3)
-            reinstall_flow
-            return 1  # Продолжить как свежая установка
-            ;;
-        4)
-            uninstall_all
-            exit 0
-            ;;
-        5)
-            show_status
-            exit 0
-            ;;
-        6)
-            log_info "Выход."
-            exit 0
-            ;;
-        *)
-            log_err "Неверный выбор."
-            exit 1
-            ;;
-    esac
+    if   [[ "$choice" == "$opt_update" ]]; then
+        update_flow
+        exit 0
+    elif [[ "$choice" == "$opt_migrate" && "$opt_migrate" -gt 0 ]]; then
+        migrate_to_telemt
+        exit 0
+    elif [[ "$choice" == "$opt_reinstall" ]]; then
+        reinstall_flow
+        return 1
+    elif [[ "$choice" == "$opt_uninstall" ]]; then
+        uninstall_all
+        exit 0
+    elif [[ "$choice" == "$opt_status" ]]; then
+        show_status
+        exit 0
+    elif [[ "$choice" == "$opt_exit" ]]; then
+        log_info "Выход."
+        exit 0
+    else
+        log_err "Неверный выбор."
+        exit 1
+    fi
 }
 
 # ── Обновление образа ──

@@ -129,17 +129,14 @@ write_stream_config() {
 # Сгенерировано deploy_mt.sh $(date '+%Y-%m-%d %H:%M:%S')
 # ─────────────────────────────────────────────────────────────────
 stream {
-    resolver 8.8.8.8 1.1.1.1 valid=300s;
 
     map \$ssl_preread_server_name \$backend {
-        # 1. Если пришел пакет конкретно с нашим FAKETLS доменом -> кидаем в Телегу
-        ${FAKETLS_DOMAIN}    mtproto_backend;
-        
-        # 2. Если пришел пакет с доменом вашего сайта -> на ваш сайт (если он есть)
+        # 1. Домены ваших сайтов -> на веб-бэкенд
 $(echo -e "$map_entries")
-        
-        # 3. ВСЁ ОСТАЛЬНОЕ (сканеры РКН без SNI, левые домены) -> кидаем на Cloudflare
-        default              external_fallback;
+
+        # 2. ВСЁ ОСТАЛЬНОЕ (MTProto FakeTLS, сканеры, пустой SNI) -> Telemt
+        #    Telemt сам маскируется: сканеры увидят реальный ${FAKETLS_DOMAIN}
+        default              mtproto_backend;
     }
 
     upstream mtproto_backend {
@@ -150,18 +147,13 @@ $(echo -e "$map_entries")
         server 127.0.0.1:${intermediate_port};
     }
 
-    upstream external_fallback {
-        # Прозрачно прокидываем сканеры на белый сайт
-        server ${EXTERNAL_FALLBACK};
-    }
-
     # Основной слушатель на внешнем 443
     server {
         listen 443;
         listen [::]:443;
         ssl_preread on;
         proxy_pass \$backend;
-        
+
         # Против 16KB freeze + защита от обрывов
         proxy_buffer_size 16k;
         proxy_connect_timeout 10s;
@@ -180,7 +172,7 @@ STREAMEOF
 
     log_ok "Конфиг создан: ${BOLD}${STREAM_CONF}${RESET}"
     log_dim "Схема: :443 → SNI-роутер → сайты (через ${intermediate_port} с proxy_protocol)"
-    log_dim "                          → MTProto (чистый TCP на ${MTG_INTERNAL_PORT})"
+    log_dim "                          → MTProto (всё остальное на ${MTG_INTERNAL_PORT})"
 }
 
 # ── Подключение stream-конфига к nginx.conf ──

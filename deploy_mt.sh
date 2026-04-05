@@ -883,17 +883,14 @@ write_stream_config() {
 # Сгенерировано deploy_mt.sh $(date '+%Y-%m-%d %H:%M:%S')
 # ─────────────────────────────────────────────────────────────────
 stream {
-    resolver 8.8.8.8 1.1.1.1 valid=300s;
 
     map \$ssl_preread_server_name \$backend {
-        # 1. Если пришел пакет конкретно с нашим FAKETLS доменом -> кидаем в Телегу
-        ${FAKETLS_DOMAIN}    mtproto_backend;
-        
-        # 2. Если пришел пакет с доменом вашего сайта -> на ваш сайт (если он есть)
+        # 1. Домены ваших сайтов -> на веб-бэкенд
 $(echo -e "$map_entries")
-        
-        # 3. ВСЁ ОСТАЛЬНОЕ (сканеры РКН без SNI, левые домены) -> кидаем на Cloudflare
-        default              external_fallback;
+
+        # 2. ВСЁ ОСТАЛЬНОЕ (MTProto FakeTLS, сканеры, пустой SNI) -> Telemt
+        #    Telemt сам маскируется: сканеры увидят реальный ${FAKETLS_DOMAIN}
+        default              mtproto_backend;
     }
 
     upstream mtproto_backend {
@@ -904,18 +901,13 @@ $(echo -e "$map_entries")
         server 127.0.0.1:${intermediate_port};
     }
 
-    upstream external_fallback {
-        # Прозрачно прокидываем сканеры на белый сайт
-        server ${EXTERNAL_FALLBACK};
-    }
-
     # Основной слушатель на внешнем 443
     server {
         listen 443;
         listen [::]:443;
         ssl_preread on;
         proxy_pass \$backend;
-        
+
         # Против 16KB freeze + защита от обрывов
         proxy_buffer_size 16k;
         proxy_connect_timeout 10s;
@@ -934,7 +926,7 @@ STREAMEOF
 
     log_ok "Конфиг создан: ${BOLD}${STREAM_CONF}${RESET}"
     log_dim "Схема: :443 → SNI-роутер → сайты (через ${intermediate_port} с proxy_protocol)"
-    log_dim "                          → MTProto (чистый TCP на ${MTG_INTERNAL_PORT})"
+    log_dim "                          → MTProto (всё остальное на ${MTG_INTERNAL_PORT})"
 }
 
 # ── Подключение stream-конфига к nginx.conf ──
@@ -1187,53 +1179,44 @@ check_existing() {
     echo ""
     echo -e "  ${WHITE}${BOLD}Что сделать?${RESET}"
     echo ""
-    echo -e "  ${CYAN}1${RESET}) ${BOLD}Обновить образ${RESET}  — pull новый образ, пересоздать контейнер (секрет сохранится)"
+
+    # Динамическая нумерация: если миграция скрыта, сдвигаем номера
+    local n=1
+    local opt_update=$n;       echo -e "  ${CYAN}${n}${RESET}) ${BOLD}Обновить образ${RESET}  — pull новый образ, пересоздать контейнер (секрет сохранится)"; ((n++))
+    local opt_migrate=0
     if [[ "${PROXY_ENGINE:-mtg}" == "mtg" ]]; then
-        echo -e "  ${GREEN}2${RESET}) ${BOLD}⚡ Мигрировать на Telemt${RESET} — переход на Rust-движок (ссылки обновятся)"
+        opt_migrate=$n; echo -e "  ${GREEN}${n}${RESET}) ${BOLD}⚡ Мигрировать на Telemt${RESET} — переход на Rust-движок (ссылки обновятся)"; ((n++))
     fi
-    echo -e "  ${CYAN}3${RESET}) ${BOLD}Переустановить${RESET} — полная переустановка с нуля (новый секрет)"
-    echo -e "  ${CYAN}4${RESET}) ${BOLD}Удалить всё${RESET}    — убрать прокси и вернуть nginx как было"
-    echo -e "  ${CYAN}5${RESET}) ${BOLD}Статус${RESET}         — показать ссылки подключения и логи"
-    echo -e "  ${CYAN}6${RESET}) ${BOLD}Выход${RESET}"
+    local opt_reinstall=$n;    echo -e "  ${CYAN}${n}${RESET}) ${BOLD}Переустановить${RESET} — полная переустановка с нуля (новый секрет)"; ((n++))
+    local opt_uninstall=$n;    echo -e "  ${CYAN}${n}${RESET}) ${BOLD}Удалить всё${RESET}    — убрать прокси и вернуть nginx как было"; ((n++))
+    local opt_status=$n;       echo -e "  ${CYAN}${n}${RESET}) ${BOLD}Статус${RESET}         — показать ссылки подключения и логи"; ((n++))
+    local opt_exit=$n;         echo -e "  ${CYAN}${n}${RESET}) ${BOLD}Выход${RESET}"
     echo ""
-    echo -ne "  ${CYAN}Выбор [1-6]:${RESET} "
+    echo -ne "  ${CYAN}Выбор [1-${n}]:${RESET} "
     read -r choice
 
-    case "$choice" in
-        1)
-            update_flow
-            exit 0
-            ;;
-        2)
-            if [[ "${PROXY_ENGINE:-mtg}" == "mtg" ]]; then
-                migrate_to_telemt
-                exit 0
-            else
-                log_err "Неверный выбор."
-                exit 1
-            fi
-            ;;
-        3)
-            reinstall_flow
-            return 1  # Продолжить как свежая установка
-            ;;
-        4)
-            uninstall_all
-            exit 0
-            ;;
-        5)
-            show_status
-            exit 0
-            ;;
-        6)
-            log_info "Выход."
-            exit 0
-            ;;
-        *)
-            log_err "Неверный выбор."
-            exit 1
-            ;;
-    esac
+    if   [[ "$choice" == "$opt_update" ]]; then
+        update_flow
+        exit 0
+    elif [[ "$choice" == "$opt_migrate" && "$opt_migrate" -gt 0 ]]; then
+        migrate_to_telemt
+        exit 0
+    elif [[ "$choice" == "$opt_reinstall" ]]; then
+        reinstall_flow
+        return 1
+    elif [[ "$choice" == "$opt_uninstall" ]]; then
+        uninstall_all
+        exit 0
+    elif [[ "$choice" == "$opt_status" ]]; then
+        show_status
+        exit 0
+    elif [[ "$choice" == "$opt_exit" ]]; then
+        log_info "Выход."
+        exit 0
+    else
+        log_err "Неверный выбор."
+        exit 1
+    fi
 }
 
 # ── Обновление образа ──
